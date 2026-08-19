@@ -231,6 +231,14 @@ func (m *Manager) Release(leaseID string, fencingToken int64) error {
 	if model.IsTerminal(l.Status) {
 		return tx.Commit() // idempotent, no state change
 	}
+	if now > l.ExpiresAt {
+		// Logically expired but not yet swept: the row is still active because
+		// the sweeper hasn't run, so IsTerminal above didn't catch it. Reject
+		// the release with ErrLeaseExpired and leave the row untouched rather
+		// than prematurely rewriting it to released before the sweeper retires
+		// it (which would lose the expired transition and its token bump).
+		return ErrLeaseExpired
+	}
 	n, err := m.store.SetLeaseStatus(tx, leaseID, model.StatusActive, model.StatusReleased)
 	if err != nil {
 		return err
